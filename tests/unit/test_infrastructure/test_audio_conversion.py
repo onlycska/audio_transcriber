@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +14,10 @@ sys.path.append(str(Path(__file__).resolve().parents[3]))
 from src.infrastructure.audio_conversion import ensure_wav_for_pipeline
 
 
-def test_ensure_wav_for_pipeline_returns_input_when_wav_positive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_wav_for_pipeline_returns_input_when_wav_positive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Positive test: returns input path when source file is already WAV."""
     # Arrange
     source = tmp_path / "sample.wav"
@@ -90,7 +93,10 @@ def test_ensure_wav_for_pipeline_reuses_cached_output_positive(
     assert called["value"] is False
 
 
-def test_ensure_wav_for_pipeline_ffmpeg_missing_negative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_wav_for_pipeline_ffmpeg_missing_negative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Negative test: raises RuntimeError when ffmpeg executable is missing."""
     # Arrange
     source = tmp_path / "sample.mp3"
@@ -106,7 +112,10 @@ def test_ensure_wav_for_pipeline_ffmpeg_missing_negative(tmp_path: Path, monkeyp
         ensure_wav_for_pipeline(source)
 
 
-def test_ensure_wav_for_pipeline_ffmpeg_failed_negative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ensure_wav_for_pipeline_ffmpeg_failed_negative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Negative test: raises RuntimeError and includes ffmpeg stderr."""
     # Arrange
     source = tmp_path / "sample.mp3"

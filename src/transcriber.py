@@ -1,21 +1,19 @@
 """Audio transcription with diarization and overlap-safe chunking."""
 
+import os
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-import os
-from collections.abc import Sequence
-
-from loguru import logger
 import soundfile as sf
 import torch
 import whisper
+from loguru import logger
 from pyannote.audio import Pipeline
 
 from src.infrastructure.audio_conversion import ensure_wav_for_pipeline
 from src.infrastructure.logging import configure_logging
 from src.service.transcription import mixdown_to_mono, transcribe_in_chunks
-
 
 HF_TOKEN = os.getenv("HF_TOKEN", "your_token")
 AUDIO_FILE = os.getenv("AUDIO_FILE", "/path/to/audiofile.wav")

@@ -7,13 +7,14 @@ The goal is to keep this code testable and independent from CLI/runtime wiring.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
-
 import math
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
-import whisper
+
+if TYPE_CHECKING:
+    import whisper
 
 
 def mixdown_to_mono(waveform: Any) -> Any:
@@ -110,7 +111,8 @@ def transcribe_in_chunks(
         primary_end = min(total_duration, current + chunk_step)
         accepted_segments = 0
 
-        for seg in result["segments"]:
+        for seg_raw in result["segments"]:
+            seg = cast(dict[str, Any], seg_raw)
             seg_start = float(seg["start"]) + chunk_start
             seg_end = float(seg["end"]) + chunk_start
             seg_mid = (seg_start + seg_end) / 2

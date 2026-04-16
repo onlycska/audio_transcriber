@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import json
 import logging
 import os
 import sys
 import traceback
+from datetime import datetime
 from typing import Any
 
 from loguru import logger as _loguru_logger
@@ -107,8 +107,21 @@ def _text_format(record: dict[str, Any]) -> str:
 
 
 def _is_json_enabled() -> bool:
-    """Determine whether JSON logs should be enabled by default."""
-    return os.getenv("LOG_JSON", "1").strip().lower() not in {"0", "false", "no"}
+    """Determine whether JSON logs should be enabled by default.
+
+    Priority:
+    1. Explicit ``LOG_JSON`` env var.
+    2. Local/dev environment defaults to text logs.
+    3. Other environments default to JSON logs.
+    """
+    explicit_value = os.getenv("LOG_JSON")
+    if explicit_value is not None:
+        return explicit_value.strip().lower() not in {"0", "false", "no"}
+
+    app_env = os.getenv("APP_ENV", "").strip().lower()
+    if app_env in {"local", "dev"}:
+        return False
+    return True
 
 
 def _get_effective_level(level: str | None) -> str:
@@ -120,7 +133,7 @@ def _get_effective_level(level: str | None) -> str:
 def _make_format_patcher(use_json: bool):
     """Create a patcher that stores formatted output into record field."""
 
-    def _patch(record: dict[str, Any]) -> None:
+    def _patch(record: Any) -> None:
         record["_formatted"] = _json_format(record) if use_json else _text_format(record)
 
     return _patch

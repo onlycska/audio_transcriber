@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -360,7 +360,7 @@ def test_merge_same_speaker_single_utterance_positive() -> None:
     """Positive test: keeps single utterance unchanged."""
     # Arrange
     tagged = [{"speaker": "SPEAKER_00", "text": "hello"}]
-    segments = [{"start": 0.0, "end": 0.4}]
+    segments: list[dict[str, float | str]] = [{"start": 0.0, "end": 0.4}]
 
     # Act
     merged = merge_same_speaker(tagged, segments)
@@ -376,7 +376,10 @@ def test_merge_same_speaker_merge_when_gap_small_positive() -> None:
         {"speaker": "SPEAKER_00", "text": "hello"},
         {"speaker": "SPEAKER_00", "text": "world"},
     ]
-    segments = [{"start": 0.0, "end": 1.0}, {"start": 1.4, "end": 2.0}]
+    segments: list[dict[str, float | str]] = [
+        {"start": 0.0, "end": 1.0},
+        {"start": 1.4, "end": 2.0},
+    ]
 
     # Act
     merged = merge_same_speaker(tagged, segments, min_merge_gap=0.5)
@@ -392,7 +395,10 @@ def test_merge_same_speaker_do_not_merge_when_gap_large_positive() -> None:
         {"speaker": "SPEAKER_00", "text": "hello"},
         {"speaker": "SPEAKER_00", "text": "world"},
     ]
-    segments = [{"start": 0.0, "end": 1.0}, {"start": 2.0, "end": 3.0}]
+    segments: list[dict[str, float | str]] = [
+        {"start": 0.0, "end": 1.0},
+        {"start": 2.0, "end": 3.0},
+    ]
 
     # Act
     merged = merge_same_speaker(tagged, segments, min_merge_gap=0.5)
@@ -411,7 +417,10 @@ def test_merge_same_speaker_do_not_merge_different_speakers_positive() -> None:
         {"speaker": "SPEAKER_00", "text": "hello"},
         {"speaker": "SPEAKER_01", "text": "world"},
     ]
-    segments = [{"start": 0.0, "end": 1.0}, {"start": 1.1, "end": 2.0}]
+    segments: list[dict[str, float | str]] = [
+        {"start": 0.0, "end": 1.0},
+        {"start": 1.1, "end": 2.0},
+    ]
 
     # Act
     merged = merge_same_speaker(tagged, segments, min_merge_gap=0.5)

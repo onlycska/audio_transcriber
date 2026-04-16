@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from loguru import logger
 
@@ -35,7 +35,9 @@ def ensure_wav_for_pipeline(
 
     output_path = source_path.with_name(f"{source_path.stem}_converted.wav")
     if output_path.exists() and output_path.stat().st_mtime >= source_path.stat().st_mtime:
-        logger.info(f"Using cached converted audio: input={source_path}, output={output_path}")
+        logger.info(
+            f"Using cached converted audio: input={source_path}, output={output_path}",
+        )
         return output_path
 
     command = [
@@ -61,7 +63,8 @@ def ensure_wav_for_pipeline(
         subprocess.run(command, check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise RuntimeError(
-            "ffmpeg is not installed or not available in PATH. Install ffmpeg to enable audio conversion.",
+            "ffmpeg is not installed or not available in PATH. "
+            "Install ffmpeg to enable audio conversion.",
         ) from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
