@@ -16,6 +16,7 @@ from src.infrastructure.audio_conversion import ensure_wav_for_pipeline
 from src.infrastructure.logging import configure_logging
 from src.service.transcription import mixdown_to_mono, transcribe_in_chunks
 
+
 HF_TOKEN = os.getenv("HF_TOKEN", "your_token")
 AUDIO_FILE = os.getenv("AUDIO_FILE", "/path/to/audiofile.wav")
 NUM_SPEAKERS = int(os.getenv("NUM_SPEAKERS", "2"))
@@ -29,7 +30,6 @@ LANGUAGE = os.getenv("LANGUAGE", "ru")
 
 configure_logging()
 logger.info("Application startup")
-
 
 # 1. Загружаем pipeline
 logger.info("Загружаем diarization модель...")
@@ -137,7 +137,7 @@ lines = [f"[{item['speaker']}] {item['text']}" for item in merged]
 logger.info(f"Транскрипция готова: segments={len(segments)}, merged_replicas={len(merged)}")
 logger.info(f"\n=== ТРАНСКРИПЦИЯ ===\n{'\n'.join(lines)}")
 
-results_dir = Path("results")
+results_dir = Path("../results")
 results_dir.mkdir(exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
