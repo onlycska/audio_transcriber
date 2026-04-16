@@ -1,0 +1,215 @@
+---
+description: "SOLID code style principles for clean architecture"
+globs: ["**/*.py"]
+---
+
+# SOLID Principles
+
+We follow SOLID principles to keep code clean, extensible, and easy to test.
+
+## General agreements
+
+1. Every code change should be checked for SOLID compliance.
+2. During code review, SOLID violations are treated as architectural issues.
+3. For new modules, prefer composition, abstractions, and dependency injection.
+4. If an implementation intentionally violates SOLID for optimization reasons,
+   this must be explicitly documented in code or an ADR.
+
+## S — Single Responsibility Principle
+
+Each class, function, or module should solve only one problem and have only one
+reason to change.
+
+If an entity performs more than one independent action, split it.
+
+Bad:
+
+```python
+class UserManager:
+    def __init__(self, user: User) -> None:
+        self.user = user
+
+    def save_to_db(self) -> None:
+        ...
+
+    def send_email(self, message: str) -> None:
+        ...  # Violation: this class both persists users and sends email
+```
+
+Good:
+
+```python
+class UserDB:
+    def save(self, user: User) -> None:
+        ...
+
+
+class EmailService:
+    def send(self, to: str, message: str) -> None:
+        ...
+```
+
+## O — Open/Closed Principle
+
+Code should be open for extension but closed for modification.
+
+Use abstractions (`ABC`, protocols) and composition to add new behavior without
+changing existing working code.
+
+```python
+from abc import ABC, abstractmethod
+
+
+class PaymentProcessor(ABC):
+    @abstractmethod
+    def process(self, amount: float) -> None:
+        pass
+
+
+class CreditCardProcessor(PaymentProcessor):
+    def process(self, amount: float) -> None:
+        ...
+
+
+class PayPalProcessor(PaymentProcessor):
+    def process(self, amount: float) -> None:
+        ...
+```
+
+A new payment method is added by creating a new implementation class without
+modifying existing handlers.
+
+## L — Liskov Substitution Principle
+
+Subtypes must be substitutable for their base types.
+
+A subclass must not break the expected behavior of the base contract.
+
+Bad:
+
+```python
+class Bird:
+    def fly(self) -> None:
+        ...
+
+
+class Penguin(Bird):  # Violation: penguins cannot fly
+    def fly(self) -> None:
+        raise NotImplementedError
+```
+
+Good:
+
+```python
+class Bird:
+    pass
+
+
+class FlyingBird(Bird):
+    def fly(self) -> None:
+        ...
+
+
+class Penguin(Bird):  # Correct design now
+    pass
+```
+
+## I — Interface Segregation Principle
+
+Clients must not depend on methods they do not use.
+
+Create focused interfaces instead of one "fat" interface.
+
+Bad:
+
+```python
+class MultiFunctionPrinter:
+    def print(self) -> None:
+        ...
+
+    def scan(self) -> None:
+        ...
+
+    def fax(self) -> None:
+        ...
+```
+
+Good:
+
+```python
+class Printer:
+    def print(self) -> None:
+        ...
+
+
+class Scanner:
+    def scan(self) -> None:
+        ...
+
+
+class Fax:
+    def fax(self) -> None:
+        ...
+```
+
+Clients should depend only on the interfaces they actually need.
+
+## D — Dependency Inversion Principle
+
+High-level modules should not depend on low-level modules; both should depend
+on abstractions.
+
+Inject dependencies through constructors or factories (DI) instead of creating
+concrete implementations inside business logic.
+
+Bad:
+
+```python
+class LightBulb:
+    def turn_on(self) -> None:
+        ...
+
+
+class Switch:
+    def __init__(self) -> None:
+        self.bulb = LightBulb()  # Hard dependency
+```
+
+Good:
+
+```python
+from abc import ABC, abstractmethod
+
+
+class Switchable(ABC):
+    @abstractmethod
+    def turn_on(self) -> None:
+        ...
+
+
+class LightBulb(Switchable):
+    def turn_on(self) -> None:
+        ...
+
+
+class Switch:
+    def __init__(self, device: Switchable) -> None:
+        self.device = device
+```
+
+## Author and reviewer checklist
+
+- `SRP`: each entity has one responsibility and one reason to change.
+- `OCP`: add new behavior via extension, not by rewriting base code.
+- `LSP`: subclasses fully respect the base type contract.
+- `ISP`: interfaces are small and tailored to specific clients.
+- `DIP`: dependencies point to abstractions; concrete implementations are
+  injected.
+
+## Minimal anti-patterns (not allowed)
+
+1. A "god class" that mixes business logic, infrastructure, and orchestration.
+2. `if/elif` branching by type where polymorphism should be used.
+3. Subclasses that raise `NotImplementedError` for required methods.
+4. Interfaces containing unused "just in case" methods.
+5. Creating infrastructure dependencies directly inside domain services.

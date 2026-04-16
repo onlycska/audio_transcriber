@@ -1,0 +1,1086 @@
+---
+description: Guidelines for testing
+globs: ["*.py", "tests/**"]
+---
+# Testing Guidelines
+
+## General Testing Principles
+
+### 1. Testing Pyramid
+- **Unit tests** (70%) - fast, isolated component tests
+- **Integration tests** (20%) - tests of interaction between layers
+- **E2E tests** (10%) - full user flow tests
+
+### 2. Principles of Good Tests
+- **FIRST**: Fast, Independent, Repeatable, Self-validating, Timely
+- **AAA**: Arrange, Act, Assert
+- **One test = one assertion**
+- **Readable test names**
+- **Tests should be split into positive and negative. The test name must include the word `positive` or `negative`**
+- **Each test must include a docstring describing exactly what it verifies**
+- **Tests must not depend on other tests**
+- **Tests must not depend on configuration**
+- **Tests must not depend on external resources**
+- **Tests must not depend on time**
+- **Tests must not depend on system state**
+- **Tests must be isolated**
+
+## Test Structure
+
+**The test structure must mirror the application structure.**
+```
+tests/
+├── unit/                     # Unit tests
+│   ├── test_domain/          # Domain layer tests
+│   ├── test_service/         # Service layer tests
+│   ├── test_infrastructure/  # Infrastructure layer tests
+│   └── test_presentation/    # Presentation layer tests
+├── integration/              # Integration tests
+├── mock/                     # Mock objects and fixtures
+└── conftest.py               # Shared fixtures
+```
+
+## Unit Test Guidelines
+
+### 1. Domain Layer Tests
+```python
+# tests/unit/test_domain/test_entities/test_act.py
+import datetime
+import decimal
+import pytest
+
+from webmasters.domain.entities.act import Act
+from webmasters.domain.entities.fine import Fine
+from webmasters.domain.entities.reward import Reward
+from webmasters.domain.value_objects.payment import PaymentRequest
+from webmasters.domain.value_objects.sign_info import SignInfo
+from webmasters.domain.enums import SignType, SignStatus
+
+
+class TestAct:
+    """Tests for the Act aggregate"""
+
+    @pytest.fixture
+    def sample_act(self):
+        """Fixture with a sample act"""
+        return Act(
+            payment_request=PaymentRequest(
+                webmaster_id=123,
+                request_id="req_123",
+            ),
+            fines=[Fine(fine_id=1), Fine(fine_id=2)],
+            rewards=[Reward(reward_id=3)],
+            sign_info=SignInfo(
+                signed_at=datetime.datetime.now(),
+                sign_type=SignType.ELECTRONIC,
+                sign_status=SignStatus.SIGNED,
+                pep_uuid="uuid_123",
+                signed_doc_url="https://example.com/doc.pdf",
+            ),
+        )
+
+    def test_act_creation_positive(self, sample_act):
+        """Positive test: successful act creation"""
+        # Arrange
+        webmaster_id = 123
+        request_id = "req_123"
+
+        # Act
+        act = Act(
+            payment_request=PaymentRequest(
+                webmaster_id=webmaster_id,
+                request_id=request_id,
+            ),
+            fines=[],
+            rewards=[],
+            sign_info=SignInfo(
+                signed_at=datetime.datetime.now(),
+                sign_type=SignType.ELECTRONIC,
+                sign_status=SignStatus.DRAFT,
+                pep_uuid="uuid_123",
+            ),
+        )
+
+        # Assert
+        assert act.payment_request.webmaster_id == webmaster_id
+        assert act.payment_request.request_id == request_id
+        assert act.fines == []
+        assert act.rewards == []
+        assert act.sign_info.sign_type == SignType.ELECTRONIC
+        assert act.sign_info.sign_status == SignStatus.DRAFT
+
+    def test_add_fine_positive(self, sample_act):
+        """Positive test: adding a fine to an act"""
+        # Arrange
+        new_fine = Fine(fine_id=3)
+        initial_fines_count = len(sample_act.fines)
+
+        # Act
+        sample_act.add_fine(new_fine)
+
+        # Assert
+        assert len(sample_act.fines) == initial_fines_count + 1
+        assert new_fine in sample_act.fines
+        assert sample_act.version == 1
+
+    def test_add_fine_duplicate_negative(self, sample_act):
+        """Negative test: adding a duplicate fine"""
+        # Arrange
+        duplicate_fine = Fine(fine_id=1)  # Already exists in sample_act
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Fine already added to act"):
+            sample_act.add_fine(duplicate_fine)
+
+    def test_add_fine_signed_act_negative(self, sample_act):
+        """Negative test: adding a fine to a signed act"""
+        # Arrange
+        sample_act.sign(sample_act.sign_info)
+        new_fine = Fine(fine_id=3)
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Cannot add fines to non-draft act"):
+            sample_act.add_fine(new_fine)
+
+    def test_sign_act_positive(self, sample_act):
+        """Positive test: signing an act"""
+        # Arrange
+        sign_info = SignInfo(
+            signed_at=datetime.datetime.now(),
+            sign_type=SignType.DIGITAL,
+            sign_status=SignStatus.SIGNED,
+            pep_uuid="uuid_456",
+            signed_doc_url="https://example.com/signed_doc.pdf",
+        )
+
+        # Act
+        sample_act.sign(sign_info)
+
+        # Assert
+        assert sample_act.sign_info.sign_type == SignType.DIGITAL
+        assert sample_act.sign_info.sign_status == SignStatus.SIGNED
+        assert sample_act.sign_info.pep_uuid == "uuid_456"
+        assert sample_act.version == 1
+
+    def test_sign_act_already_signed_negative(self, sample_act):
+        """Negative test: signing an already signed act"""
+        # Arrange
+        sample_act.sign(sample_act.sign_info)
+        new_sign_info = SignInfo(
+            signed_at=datetime.datetime.now(),
+            sign_type=SignType.DIGITAL,
+            sign_status=SignStatus.SIGNED,
+            pep_uuid="uuid_789",
+        )
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Act is already signed"):
+            sample_act.sign(new_sign_info)
+```
+
+### 2. Service Layer Tests
+```python
+# tests/unit/test_service/test_handlers/test_commands/test_create_act.py
+import datetime
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+from webmasters.service.handlers.commands.acts.create_act import CreateActCommandHandler
+from webmasters.service.models.commands.acts.create_act import CreateActCommand, CreateActCommandResult
+from webmasters.service.interfaces.factories.uow_factory import UowFactory
+from webmasters.service.interfaces.repositories.acts import IActsRepository
+
+
+class TestCreateActCommandHandler:
+    """Tests for CreateActCommandHandler"""
+
+    @pytest.fixture
+    def mock_uow_factory(self):
+        """Fixture with a mock UoW factory"""
+        return AsyncMock(spec=UowFactory)
+
+    @pytest.fixture
+    def mock_acts_repository(self):
+        """Fixture with a mock acts repository"""
+        return AsyncMock(spec=IActsRepository)
+
+    @pytest.fixture
+    def mock_uow(self, mock_acts_repository):
+        """Fixture with a mock UoW"""
+        uow = AsyncMock()
+        uow.transaction.return_value.__aenter__.return_value = mock_acts_repository
+        return uow
+
+    @pytest.fixture
+    def handler(self, mock_uow_factory):
+        """Fixture with the command handler"""
+        return CreateActCommandHandler(mock_uow_factory)
+
+    @pytest.fixture
+    def sample_command(self):
+        """Fixture with a sample command"""
+        return CreateActCommand(
+            webmaster_id=123,
+            payment_request_id="req_123",
+            fines=[1, 2],
+            rewards=[3, 4],
+            sign_type="electronic",
+            sign_status="signed",
+            sign_date=datetime.datetime.now(),
+            uid="uuid_123",
+            doc_url="https://example.com/doc.pdf",
+        )
+
+    async def test_handle_positive(self, handler, mock_uow_factory, mock_uow, mock_acts_repository, sample_command):
+        """Positive test: successful command execution"""
+        # Arrange
+        mock_uow_factory.return_value = mock_uow
+        mock_created_act = MagicMock()
+        mock_created_act.act_id = 1
+        mock_created_act.payment_request.webmaster_id = 123
+        mock_created_act.payment_request.request_id = "req_123"
+        mock_created_act.sign_info.sign_type.value = "electronic"
+        mock_created_act.sign_info.sign_status.value = "signed"
+        mock_created_act.sign_info.signed_at = datetime.datetime.now()
+        mock_created_act.sign_info.pep_uuid = "uuid_123"
+        mock_created_act.sign_info.signed_doc_url = "https://example.com/doc.pdf"
+        mock_created_act.created_at = datetime.datetime.now()
+        mock_created_act.updated_at = datetime.datetime.now()
+        mock_acts_repository.create.return_value = mock_created_act
+
+        # Act
+        result = await handler.handle(sample_command)
+
+        # Assert
+        assert isinstance(result, CreateActCommandResult)
+        assert result.id == 1
+        assert result.webmaster_id == 123
+        assert result.payment_request_id == "req_123"
+        assert result.sign_type == "electronic"
+        assert result.sign_status == "signed"
+        assert result.uid == "uuid_123"
+        assert result.doc_url == "https://example.com/doc.pdf"
+
+        # Check calls
+        mock_uow_factory.assert_called_once()
+        mock_acts_repository.create.assert_called_once()
+
+    async def test_handle_act_without_id_negative(self, handler, mock_uow_factory, mock_uow, mock_acts_repository, sample_command):
+        """Negative test: error when created act has no ID"""
+        # Arrange
+        mock_uow_factory.return_value = mock_uow
+        mock_created_act = MagicMock()
+        mock_created_act.act_id = None  # No ID
+
+        mock_acts_repository.create.return_value = mock_created_act
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Created act has no ID"):
+            await handler.handle(sample_command)
+
+    async def test_handle_empty_fines_and_rewards_negative(self, handler, sample_command):
+        """Negative test: error when fines and rewards are empty"""
+        # Arrange
+        command_without_data = CreateActCommand(
+            webmaster_id=123,
+            payment_request_id="req_123",
+            fines=[],  # Empty list
+            rewards=[],  # Empty list
+            sign_type="electronic",
+            sign_status="signed",
+            sign_date=datetime.datetime.now(),
+        )
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Act must have at least one fine or reward"):
+            await handler.handle(command_without_data)
+```
+
+### 3. Infrastructure Layer Tests
+```python
+# tests/unit/test_infrastructure/test_gateways/test_http_legacy_billing_gateway.py
+import datetime
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+import httpx
+
+from webmasters.infrastructure.gateways.legacy_billing.http_legacy_billing_gateway import HttpLegacyBillingGateway
+from webmasters.domain.entities.act import Act
+from webmasters.domain.value_objects.payment import PaymentRequest
+from webmasters.domain.value_objects.sign_info import SignInfo
+from webmasters.domain.enums import SignType, SignStatus
+from webmasters.service.errors import ActNotFound, LegacyBillingError
+
+
+class TestHttpLegacyBillingGateway:
+    """Tests for HttpLegacyBillingGateway"""
+
+    @pytest.fixture
+    def mock_http_client(self):
+        """Fixture with a mock HTTP client"""
+        return AsyncMock(spec=httpx.AsyncClient)
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Fixture with mock settings"""
+        settings = MagicMock()
+        settings.base_url = "https://api.example.com"
+        settings.timeout = 30
+        return settings
+
+    @pytest.fixture
+    def gateway(self, mock_http_client, mock_settings):
+        """Fixture with the gateway"""
+        return HttpLegacyBillingGateway(mock_http_client, mock_settings)
+
+    @pytest.fixture
+    def sample_act(self):
+        """Fixture with a sample act"""
+        return Act(
+            payment_request=PaymentRequest(
+                webmaster_id=123,
+                request_id="req_123",
+            ),
+            fines=[],
+            rewards=[],
+            sign_info=SignInfo(
+                signed_at=datetime.datetime.now(),
+                sign_type=SignType.ELECTRONIC,
+                sign_status=SignStatus.SIGNED,
+                pep_uuid="uuid_123",
+                signed_doc_url="https://example.com/doc.pdf",
+            ),
+        )
+
+    async def test_create_act_positive(self, gateway, mock_http_client, sample_act):
+        """Positive test: successful act creation"""
+        # Arrange
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {
+            "id": 1,
+            "webmaster_id": 123,
+            "payment_request_id": "req_123",
+            "fines": [],
+            "rewards": [],
+            "sign_info": {
+                "signed_at": datetime.datetime.now().isoformat(),
+                "sign_type": "electronic",
+                "sign_status": "signed",
+                "pep_uuid": "uuid_123",
+                "signed_doc_url": "https://example.com/doc.pdf",
+            },
+            "created_at": datetime.datetime.now().isoformat(),
+            "updated_at": datetime.datetime.now().isoformat(),
+        }
+
+        mock_http_client.post.return_value = mock_response
+
+        # Act
+        result = await gateway.create_act(sample_act)
+
+        # Assert
+        assert result.act_id == 1
+        assert result.payment_request.webmaster_id == 123
+        assert result.payment_request.request_id == "req_123"
+        assert result.sign_info.sign_type == SignType.ELECTRONIC
+        assert result.sign_info.sign_status == SignStatus.SIGNED
+
+        # Check HTTP client call
+        mock_http_client.post.assert_called_once()
+        call_args = mock_http_client.post.call_args
+        assert call_args[0][0] == "https://api.example.com/api/v1/acts"
+        assert call_args[1]["timeout"] == 30
+
+    async def test_create_act_404_error(self, gateway, mock_http_client, sample_act):
+        """Negative test: 404 error when creating an act"""
+        # Arrange
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = "Act not found"
+
+        mock_http_client.post.side_effect = httpx.HTTPStatusError(
+            "Not Found",
+            request=MagicMock(),
+            response=mock_response,
+        )
+
+        # Act & Assert
+        with pytest.raises(ActNotFound, match="Act not found: Act not found"):
+            await gateway.create_act(sample_act)
+
+    async def test_create_act_network_error(self, gateway, mock_http_client, sample_act):
+        """Negative test: network error when creating an act"""
+        # Arrange
+        mock_http_client.post.side_effect = httpx.RequestError("Network error")
+
+        # Act & Assert
+        with pytest.raises(LegacyBillingError, match="Request failed: Network error"):
+            await gateway.create_act(sample_act)
+```
+
+### 4. Presentation Layer Tests
+```python
+# tests/unit/test_presentation/test_api/test_routes/test_acts.py
+import datetime
+import pytest
+from fastapi.testclient import TestClient
+from unittest.mock import AsyncMock, MagicMock
+
+from webmasters.presentation.api.app import create_app
+from webmasters.presentation.api.settings import ApiSettings
+
+
+class TestActsRoutes:
+    """Tests for act routes"""
+
+    @pytest.fixture
+    def app_settings(self):
+        """Fixture with application settings"""
+        return ApiSettings(
+            debug=True,
+            cors_origins=["*"],
+        )
+
+    @pytest.fixture
+    def app(self, app_settings):
+        """Fixture with the application"""
+        return create_app(app_settings)
+
+    @pytest.fixture
+    def client(self, app):
+        """Fixture with the test client"""
+        return TestClient(app)
+
+    def test_create_act_positive(self, client):
+        """Positive test: successful act creation"""
+        # Arrange
+        request_data = {
+            "webmaster_id": 123,
+            "payment_request_id": "req_123",
+            "fines": [1, 2],
+            "rewards": [3, 4],
+            "sign_type": "electronic",
+            "sign_status": "signed",
+            "sign_date": datetime.datetime.now().isoformat(),
+            "uid": "uuid_123",
+            "doc_url": "https://example.com/doc.pdf",
+        }
+
+        # Act
+        response = client.post("/api/v1/acts", json=request_data)
+
+        # Assert
+        assert response.status_code == 201
+        data = response.json()
+        assert data["webmaster_id"] == 123
+        assert data["payment_request_id"] == "req_123"
+        assert data["sign_type"] == "electronic"
+        assert data["sign_status"] == "signed"
+
+    def test_create_act_validation_error(self, client):
+        """Negative test: validation error when creating an act"""
+        # Arrange
+        invalid_request_data = {
+            "webmaster_id": -1,  # Invalid ID
+            "payment_request_id": "",  # Empty string
+            "sign_type": "invalid_type",  # Invalid type
+        }
+
+        # Act
+        response = client.post("/api/v1/acts", json=invalid_request_data)
+
+        # Assert
+        assert response.status_code == 422
+        data = response.json()
+        assert "error" in data
+        assert data["error"] == "ValidationError"
+
+    def test_get_act_positive(self, client):
+        """Positive test: successful act retrieval"""
+        # Act
+        response = client.get("/api/v1/acts/1")
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert "id" in data
+        assert "webmaster_id" in data
+
+    def test_get_act_not_found(self, client):
+        """Negative test: getting a non-existing act"""
+        # Act
+        response = client.get("/api/v1/acts/999")
+
+        # Assert
+        assert response.status_code == 404
+        data = response.json()
+        assert data["error"] == "ActNotFound"
+```
+
+## Integration Test Guidelines
+
+### 1. Cross-Layer Interaction Tests
+```python
+# tests/integration/test_presentation/test_api/test_routes/test_acts_integration.py
+import datetime
+import pytest
+from fastapi.testclient import TestClient
+
+from webmasters.presentation.api.app import create_app
+from webmasters.presentation.api.settings import ApiSettings
+from tests.mock.mock_di import mock_container
+
+
+class TestActsIntegration:
+    """Integration tests for acts"""
+
+    @pytest.fixture
+    def app_settings(self):
+        """Fixture with settings"""
+        return ApiSettings(debug=True)
+
+    @pytest.fixture
+    def app(self, app_settings):
+        """Fixture with the application"""
+        app = create_app(app_settings)
+        # Replace DI container with mock
+        app.state.di_container = mock_container
+        return app
+
+    @pytest.fixture
+    def client(self, app):
+        """Fixture with the test client"""
+        return TestClient(app)
+
+    def test_create_act_full_flow(self, client):
+        """Test full flow of act creation"""
+        # Arrange
+        request_data = {
+            "webmaster_id": 123,
+            "payment_request_id": "req_123",
+            "fines": [1, 2],
+            "rewards": [3, 4],
+            "sign_type": "electronic",
+            "sign_status": "signed",
+            "sign_date": datetime.datetime.now().isoformat(),
+            "uid": "uuid_123",
+            "doc_url": "https://example.com/doc.pdf",
+        }
+
+        # Act
+        response = client.post("/api/v1/acts", json=request_data)
+
+        # Assert
+        assert response.status_code == 201
+        data = response.json()
+        assert data["webmaster_id"] == 123
+        assert data["payment_request_id"] == "req_123"
+
+        # Check that the act can be retrieved
+        get_response = client.get(f"/api/v1/acts/{data['id']}")
+        assert get_response.status_code == 200
+        get_data = get_response.json()
+        assert get_data["id"] == data["id"]
+
+    def test_get_fines_with_filters(self, client):
+        """Test retrieving fines with filters"""
+        # Act
+        response = client.get(
+            "/api/v1/fines",
+            params={
+                "webmaster_id": 123,
+                "limit": 10,
+                "offset": 0,
+                "order": "asc",
+                "sort": "created_at",
+            }
+        )
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert "count" in data
+        assert "items" in data
+        assert "limit" in data
+        assert "offset" in data
+        assert data["limit"] == 10
+        assert data["offset"] == 0
+```
+
+## Mock Object Guidelines
+
+### 1. Mock DI Container
+```python
+# tests/mock/mock_di.py
+import di
+from di import dependent
+from unittest.mock import AsyncMock, MagicMock
+
+from webmasters.service.interfaces.factories.uow_factory import UowFactory
+from webmasters.service.interfaces.read_models.fines import IFinesReadModelFactory
+from webmasters.service.interfaces.read_models.rewards import IRewardsReadModelFactory
+from webmasters.service.interfaces.gateways.legacy_billing_gateway import ILegacyBillingGateway
+
+# Create mock container
+mock_container = di.Container()
+
+# Mock UoW Factory
+mock_uow_factory = AsyncMock(spec=UowFactory)
+mock_uow_factory.return_value = AsyncMock()
+
+mock_container.bind(
+    di.bind_by_type(
+        dependent.Dependent(mock_uow_factory, scope="request"),
+        UowFactory,
+    ),
+)
+
+# Mock Read Model Factories
+mock_fines_read_model_factory = AsyncMock(spec=IFinesReadModelFactory)
+mock_fines_read_model_factory.return_value = AsyncMock()
+
+mock_container.bind(
+    di.bind_by_type(
+        dependent.Dependent(mock_fines_read_model_factory, scope="request"),
+        IFinesReadModelFactory,
+    ),
+)
+
+# Mock Gateway
+mock_gateway = AsyncMock(spec=ILegacyBillingGateway)
+
+mock_container.bind(
+    di.bind_by_type(
+        dependent.Dependent(mock_gateway, scope="request"),
+        ILegacyBillingGateway,
+    ),
+)
+```
+
+### 2. Mock Data
+```python
+# tests/mock/mock_data.py
+import datetime
+import decimal
+
+
+def get_sample_act_data():
+    """Get sample act test data"""
+    return {
+        "id": 1,
+        "webmaster_id": 123,
+        "payment_request_id": "req_123",
+        "fines": [{"fine_id": 1}, {"fine_id": 2}],
+        "rewards": [{"reward_id": 3}],
+        "sign_info": {
+            "signed_at": datetime.datetime.now().isoformat(),
+            "sign_type": "electronic",
+            "sign_status": "signed",
+            "pep_uuid": "uuid_123",
+            "signed_doc_url": "https://example.com/doc.pdf",
+        },
+        "created_at": datetime.datetime.now().isoformat(),
+        "updated_at": datetime.datetime.now().isoformat(),
+    }
+
+
+def get_sample_fines_data():
+    """Get sample fines test data"""
+    return [
+        {
+            "id": 1,
+            "webmaster_id": 123,
+            "act_id": None,
+            "billing_payment_id": 456,
+            "billing_payment_date": datetime.date.today().isoformat(),
+            "comment": "Test fine 1",
+            "customer_id": "customer_1",
+            "fine_amount": "100.50",
+            "created_at": datetime.datetime.now().isoformat(),
+            "updated_at": None,
+        },
+        {
+            "id": 2,
+            "webmaster_id": 123,
+            "act_id": 789,
+            "billing_payment_id": 457,
+            "billing_payment_date": datetime.date.today().isoformat(),
+            "comment": "Test fine 2",
+            "customer_id": "customer_2",
+            "fine_amount": "200.75",
+            "created_at": datetime.datetime.now().isoformat(),
+            "updated_at": datetime.datetime.now().isoformat(),
+        },
+    ]
+```
+
+## Fixture Guidelines
+
+### 1. Common Fixtures
+```python
+# tests/conftest.py
+import pytest
+import datetime
+import decimal
+
+from webmasters.domain.entities.act import Act
+from webmasters.domain.entities.fine import Fine
+from webmasters.domain.entities.reward import Reward
+from webmasters.domain.value_objects.payment import PaymentRequest
+from webmasters.domain.value_objects.sign_info import SignInfo
+from webmasters.domain.enums import SignType, SignStatus
+
+
+@pytest.fixture
+def sample_webmaster_id():
+    """Fixture with a sample webmaster ID"""
+    return 123
+
+
+@pytest.fixture
+def sample_payment_request(sample_webmaster_id):
+    """Fixture with a sample payment request"""
+    return PaymentRequest(
+        webmaster_id=sample_webmaster_id,
+        request_id="req_123",
+    )
+
+
+@pytest.fixture
+def sample_fines():
+    """Fixture with sample fines"""
+    return [
+        Fine(fine_id=1),
+        Fine(fine_id=2),
+        Fine(fine_id=3),
+    ]
+
+
+@pytest.fixture
+def sample_rewards():
+    """Fixture with sample rewards"""
+    return [
+        Reward(reward_id=1),
+        Reward(reward_id=2),
+    ]
+
+
+@pytest.fixture
+def sample_sign_info():
+    """Fixture with sample sign info"""
+    return SignInfo(
+        signed_at=datetime.datetime.now(),
+        sign_type=SignType.ELECTRONIC,
+        sign_status=SignStatus.SIGNED,
+        pep_uuid="uuid_123",
+        signed_doc_url="https://example.com/doc.pdf",
+    )
+
+
+@pytest.fixture
+def sample_act(sample_payment_request, sample_fines, sample_rewards, sample_sign_info):
+    """Fixture with a sample act"""
+    return Act(
+        payment_request=sample_payment_request,
+        fines=sample_fines,
+        rewards=sample_rewards,
+        sign_info=sample_sign_info,
+    )
+```
+
+### 2. Fixtures for Testing
+```python
+# tests/conftest.py
+@pytest.fixture
+def mock_mediator():
+    """Fixture with a mock mediator"""
+    from unittest.mock import AsyncMock
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_data():
+    """Fixture with mock data store"""
+    return {
+        "acts": {},
+        "fines": {},
+        "rewards": {},
+    }
+
+
+@pytest.fixture
+def empty_data_store():
+    """Fixture with an empty data store"""
+    return {}
+```
+
+## Test Data Guidelines
+
+### 1. Using Faker
+```python
+# tests/conftest.py
+import faker
+
+fake = faker.Faker()
+
+
+@pytest.fixture
+def fake_webmaster_id():
+    """Fixture with a random webmaster ID"""
+    return fake.random_int(min=1, max=1000000)
+
+
+@pytest.fixture
+def fake_payment_request_id():
+    """Fixture with a random payment request ID"""
+    return fake.uuid4()
+
+
+@pytest.fixture
+def fake_pep_uuid():
+    """Fixture with a random PEP UUID"""
+    return fake.uuid4()
+
+
+@pytest.fixture
+def fake_doc_url():
+    """Fixture with a random document URL"""
+    return fake.url()
+```
+
+### 2. Parametrized Tests
+```python
+# tests/unit/test_domain/test_entities/test_act.py
+@pytest.mark.parametrize("sign_type,expected", [
+    (SignType.ELECTRONIC, "electronic"),
+    (SignType.DIGITAL, "digital"),
+    (SignType.MANUAL, "manual"),
+])
+def test_sign_type_values(sign_type, expected):
+    """Test sign type string values"""
+    assert str(sign_type) == expected
+
+
+@pytest.mark.parametrize("webmaster_id,should_raise", [
+    (123, False),
+    (0, True),
+    (-1, True),
+    (1000000, False),
+])
+def test_webmaster_id_validation(webmaster_id, should_raise):
+    """Test webmaster ID validation"""
+    if should_raise:
+        with pytest.raises(ValueError):
+            PaymentRequest(webmaster_id=webmaster_id, request_id="req_123")
+    else:
+        payment_request = PaymentRequest(webmaster_id=webmaster_id, request_id="req_123")
+        assert payment_request.webmaster_id == webmaster_id
+```
+
+## Test Utilities Guidelines
+
+### 1. Helper Functions
+```python
+# tests/utils/test_helpers.py
+import datetime
+import decimal
+from typing import Any, Dict
+
+
+def create_act_data(**kwargs) -> Dict[str, Any]:
+    """Create act test data"""
+    default_data = {
+        "id": 1,
+        "webmaster_id": 123,
+        "payment_request_id": "req_123",
+        "fines": [],
+        "rewards": [],
+        "sign_info": {
+            "signed_at": datetime.datetime.now().isoformat(),
+            "sign_type": "electronic",
+            "sign_status": "signed",
+            "pep_uuid": "uuid_123",
+            "signed_doc_url": "https://example.com/doc.pdf",
+        },
+        "created_at": datetime.datetime.now().isoformat(),
+        "updated_at": datetime.datetime.now().isoformat(),
+    }
+    default_data.update(kwargs)
+    return default_data
+
+
+def create_fine_data(**kwargs) -> Dict[str, Any]:
+    """Create fine test data"""
+    default_data = {
+        "id": 1,
+        "webmaster_id": 123,
+        "act_id": None,
+        "billing_payment_id": 456,
+        "billing_payment_date": datetime.date.today().isoformat(),
+        "comment": "Test fine",
+        "customer_id": "customer_1",
+        "fine_amount": "100.50",
+        "created_at": datetime.datetime.now().isoformat(),
+        "updated_at": None,
+    }
+    default_data.update(kwargs)
+    return default_data
+
+
+def assert_act_equal(act1: Act, act2: Act) -> None:
+    """Compare two acts"""
+    assert act1.act_id == act2.act_id
+    assert act1.payment_request.webmaster_id == act2.payment_request.webmaster_id
+    assert act1.payment_request.request_id == act2.payment_request.request_id
+    assert len(act1.fines) == len(act2.fines)
+    assert len(act1.rewards) == len(act2.rewards)
+    assert act1.sign_info.sign_type == act2.sign_info.sign_type
+    assert act1.sign_info.sign_status == act2.sign_info.sign_status
+```
+
+## Forbidden Practices in Tests
+
+❌ **DO NOT:**
+- Test multiple things in a single test
+- Make tests depend on each other
+- Use real external services in unit tests
+- Hardcode test data in many places instead of centralizing it
+- Ignore errors in tests
+
+✅ **DO:**
+- One test = one assertion
+- Independent tests
+- Use mock objects
+- Use reusable fixtures
+- Use readable test names
+
+## Examples of Good Tests
+
+### Test with Full Coverage of Behavior
+```python
+class TestActAggregate:
+    """Tests for the Act aggregate with full behavior coverage"""
+
+    def test_act_creation_with_all_fields(self):
+        """Test act creation with all fields"""
+        # Arrange
+        webmaster_id = 123
+        request_id = "req_123"
+        fines = [Fine(fine_id=1), Fine(fine_id=2)]
+        rewards = [Reward(reward_id=3)]
+        sign_info = SignInfo(
+            signed_at=datetime.datetime.now(),
+            sign_type=SignType.ELECTRONIC,
+            sign_status=SignStatus.DRAFT,
+            pep_uuid="uuid_123",
+        )
+
+        # Act
+        act = Act(
+            payment_request=PaymentRequest(
+                webmaster_id=webmaster_id,
+                request_id=request_id,
+            ),
+            fines=fines,
+            rewards=rewards,
+            sign_info=sign_info,
+        )
+
+        # Assert
+        assert act.payment_request.webmaster_id == webmaster_id
+        assert act.payment_request.request_id == request_id
+        assert act.fines == fines
+        assert act.rewards == rewards
+        assert act.sign_info == sign_info
+        assert act.version == 0
+        assert len(act.events) == 0
+
+    def test_add_fine_increments_version(self):
+        """Test that version increases when a fine is added"""
+        # Arrange
+        act = self._create_draft_act()
+        new_fine = Fine(fine_id=3)
+        initial_version = act.version
+
+        # Act
+        act.add_fine(new_fine)
+
+        # Assert
+        assert act.version == initial_version + 1
+        assert new_fine in act.fines
+        assert len(act.events) == 1
+        assert act.events[0].event_type == "fine.added_to_act"
+
+    def test_sign_act_changes_status(self):
+        """Test that status changes when act is signed"""
+        # Arrange
+        act = self._create_draft_act()
+        sign_info = SignInfo(
+            signed_at=datetime.datetime.now(),
+            sign_type=SignType.DIGITAL,
+            sign_status=SignStatus.SIGNED,
+            pep_uuid="uuid_456",
+        )
+
+        # Act
+        act.sign(sign_info)
+
+        # Assert
+        assert act.sign_info.sign_type == SignType.DIGITAL
+        assert act.sign_info.sign_status == SignStatus.SIGNED
+        assert act.sign_info.pep_uuid == "uuid_456"
+        assert act.version == 1
+        assert len(act.events) == 1
+        assert act.events[0].event_type == "act.signed"
+
+    def _create_draft_act(self) -> Act:
+        """Create a draft act for tests"""
+        return Act(
+            payment_request=PaymentRequest(
+                webmaster_id=123,
+                request_id="req_123",
+            ),
+            fines=[],
+            rewards=[],
+            sign_info=SignInfo(
+                signed_at=datetime.datetime.now(),
+                sign_type=SignType.ELECTRONIC,
+                sign_status=SignStatus.DRAFT,
+                pep_uuid="uuid_123",
+            ),
+        )
+```
+
+## Test Quality Metrics
+
+### 1. Code Coverage
+- **Goal**: at least 80% coverage
+- **Critical components (domain and service layers)**: 95% coverage
+- **Tools**: pytest-cov, coverage.py
+
+### 2. Test Quality
+- **Readability**: clear names and structure
+- **Maintainability**: easy to change and extend
+- **Performance**: fast unit tests
+- **Reliability**: stable, non-flaky results
+
+### 3. Automation
+- **CI/CD**: automatic test runs
+- **Pre-commit**: checks before commit
+- **Reports**: detailed coverage reports
+- **Notifications**: alerts when tests fail
+
+
+## How to Run Tests
+
+### 1. When to Run Tests
+- After any code changes (including after Cursor applies a requested change)
+- After changing application structure
+- After changing tests
+
+### 2. How to Run Tests
+- Use the virtual environment `./venv`
+- Use dependencies from `pyproject.toml`. Test dependencies are in the optional `[tests]` section
+- Use config `./tests/pytest-config.ini`
+- Command to run: `pytest -c ./tests/pytest-config.ini tests/ --last-failed`

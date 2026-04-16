@@ -1,0 +1,266 @@
+---
+description: "Unified logging standard for Python services"
+globs: ["**/*.py"]
+---
+
+# Logging Guidelines
+
+## Purpose
+
+This rule defines a reusable, service-level logging standard for Python
+projects. Use it in this and other services as a baseline unless a service has
+explicit, documented logging requirements.
+
+## Mandatory requirements
+
+1. Use **loguru** as the main logger.
+2. Store logger configuration module in `src/infrastructure/logging.py`.
+3. Configure logger during application startup (before app, workers, consumers,
+   schedulers, and background tasks start writing logs).
+4. Use JSON serialization in all environments by default.
+   Exception: local developer run mode when human-readable text logs are
+   explicitly required.
+5. For all third-party libraries, set explicit log levels with default
+   `ERROR` unless lower level is needed and documented.
+
+## File placement
+
+The canonical location is:
+
+- `src/infrastructure/logging.py`
+
+Do not spread sink/format/bootstrap logic across multiple modules unless there
+is a clear architecture reason.
+
+## Default format (must be used if service format is not defined)
+
+If a service does not define its own format, use the implementation below
+without semantic changes.
+
+```python
+def _json_format(record: dict[str, Any]) -> str:
+    """Format log record as minimal JSON for structured logging.
+
+    Output fields: ``text`` (message only), ``timestamp``, ``level``,
+    ``source`` (name:function:line; from traceback when exception present),
+    ``extra`` (when non-empty), ``exception`` (formatted traceback when present).
+    """
+    exc = record.get("exception")
+    source: str | None = _extract_source_from_traceback(exc) if exc is not None else None
+    if source is None:
+        name = record.get("name", "")
+        func = record.get("function", "")
+        line = record.get("line", 0)
+        source = f"{name}:{func}:{line}"
+
+    time_val = record.get("time")
+    timestamp = time_val.isoformat() if time_val is not None and hasattr(time_val, "isoformat") else str(time_val or "")
+
+    payload = {
+        "text": record.get("message", ""),
+        "timestamp": timestamp,
+        "level": _get_level_name(record),
+        "source": source,
+    }
+
+    extra = record.get("extra") or {}
+    if extra:
+        payload["extra"] = dict(extra)
+
+    if exc is not None:
+        payload["exception"] = _format_exception_traceback(exc)
+
+    return json.dumps(payload, ensure_ascii=False, default=str, separators=(", ", ": "))
+
+
+def _text_format(record: dict[str, Any]) -> str:
+    """Format log record as human-readable text with optional extra."""
+    time_val = record.get("time")
+    time_str = (
+        time_val.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        if time_val is not None and hasattr(time_val, "strftime")
+        else str(time_val or "")
+    )
+    level_name = _get_level_name(record)
+    msg = record.get("message", "")
+
+    exc = record.get("exception")
+    source = _extract_source_from_traceback(exc) if exc is not None else None
+    if source is None:
+        name = record.get("name", "")
+        func = record.get("function", "")
+        line = record.get("line", 0)
+        source = f"{name}:{func}:{line}"
+
+    out = f"{time_str} | {level_name: <8} | {source} - {msg}"
+
+    extra = record.get("extra") or {}
+    if extra:
+        extra_str = " | ".join(f"{k}={v!r}" for k, v in extra.items())
+        out += f" | extra: {extra_str}"
+
+    if exc is not None:
+        exc_str = _format_exception_traceback(exc).replace("\n", " | ")
+        out += f" | {exc_str}"
+
+    return out
+
+
+def configure_logging(
+    *,
+    level: str | None = None,
+    json_format: bool | None = None,
+) -> None:
+    effective_level = _get_effective_level(level)
+    use_json = json_format if json_format is not None else _is_json_enabled()
+
+    _loguru_logger.configure(patcher=_make_format_patcher(use_json))
+    _loguru_logger.remove()
+
+    if use_json:
+        _loguru_logger.add(
+            sys.stderr,
+            level=effective_level,
+            format="{_formatted}",
+            colorize=False,
+            diagnose=False,
+        )
+    else:
+        _loguru_logger.add(
+            sys.stderr,
+            level=effective_level,
+            format="<level>{_formatted}</level>",
+            colorize=True,
+            diagnose=True,
+        )
+```
+
+## Context best practices
+
+Use structured context as default. Prefer `logger.contextualize(...)` for
+request/task-scoped metadata, and `logger.bind(...)` (or bound logger in class
+dunder methods) for long-lived component metadata.
+
+Recommended context keys:
+
+- `trace_id`, `request_id`, `correlation_id`
+- `service`, `module`, `operation`
+- `user_id` (if allowed by security policy), `tenant_id`
+- `entity_id` / `object_id`
+
+Patterns:
+
+```python
+with logger.contextualize(request_id=req_id, trace_id=trace_id, operation="sync"):
+    logger.info("Sync started")
+```
+
+```python
+class UserSyncService:
+    def __init__(self) -> None:
+        self._logger = logger.bind(component=self.__class__.__name__)
+
+    async def run(self) -> None:
+        self._logger.info("Run started")
+```
+
+## Error logging best practices
+
+1. Log exceptions once at the boundary where you handle/translate them.
+2. Use `logger.exception(...)` inside `except` when traceback is needed.
+3. Avoid duplicate stack traces across layers.
+4. Add actionable context (`operation`, identifiers, retry attempt, external
+   dependency name).
+5. Never log secrets, credentials, tokens, full PII, or raw payloads with
+   sensitive fields.
+
+Good:
+
+```python
+try:
+    await gateway.send(batch)
+except TimeoutError:
+    logger.exception("Gateway timeout", operation="send_batch", batch_id=batch_id)
+    raise
+```
+
+Bad:
+
+```python
+except Exception as exc:
+    logger.error(f"Error: {exc}")  # no traceback, no context, hard to debug
+```
+
+## What goes into message vs context
+
+Message should answer **what happened** (human-readable event).
+Context should answer **where/for whom/with what IDs** (machine-searchable
+dimensions).
+
+Message examples:
+
+- `"Kafka consumer started"`
+- `"Retrying payment request"`
+- `"User profile updated"`
+
+Context examples:
+
+- `topic`, `partition`, `offset`
+- `payment_request_id`, `webmaster_id`
+- `attempt`, `max_attempts`, `elapsed_ms`
+
+## Log content requirements
+
+Each important log event should be:
+
+1. concise and deterministic;
+2. searchable by stable fields;
+3. suitable for alerting/observability;
+4. free from sensitive data.
+
+Minimum operational events:
+
+- app start / stop
+- config loaded (without secret values)
+- external calls start/success/failure
+- retries / circuit-breaker events
+- domain-significant state transitions
+
+## Third-party libraries log levels
+
+Set levels explicitly through stdlib `logging` so intercepted logs respect the
+same policy. Default for external libraries is `ERROR`.
+
+Baseline recommendations:
+
+- `uvicorn`: `INFO` in app runtime, `ERROR` in workers where HTTP access logs are not needed
+- `fastapi`: `ERROR`
+- `sqlalchemy`: `ERROR` (raise to `INFO` only for migration/debug sessions)
+- `alembic`: `ERROR`
+- `httpx`: `ERROR`
+- `aiokafka` / `kafka`: `ERROR`
+- `asyncio`: `ERROR`
+- `urllib3`: `ERROR`
+- `opentelemetry`: `ERROR` (or `WARNING` during setup/troubleshooting)
+
+Example bootstrap:
+
+```python
+import logging
+
+for name, level in {
+    "fastapi": logging.ERROR,
+    "uvicorn": logging.INFO,
+    "uvicorn.error": logging.INFO,
+    "uvicorn.access": logging.INFO,
+    "sqlalchemy": logging.ERROR,
+    "alembic": logging.ERROR,
+    "httpx": logging.ERROR,
+    "aiokafka": logging.ERROR,
+    "kafka": logging.ERROR,
+    "asyncio": logging.ERROR,
+    "urllib3": logging.ERROR,
+    "opentelemetry": logging.ERROR,
+}.items():
+    logging.getLogger(name).setLevel(level)
+```

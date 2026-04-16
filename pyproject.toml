@@ -1,0 +1,15 @@
+[project]
+name = "audio-transcriber"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.0",
+    "torch>=2.2,<3.0",
+    "pyannote-audio>=4.0.1",
+    "openai-whisper",
+    "soundfile",
+    "loguru>=0.7.3",
+]
+
+[tool.uv]
+no-binary-package = ["numpy"]

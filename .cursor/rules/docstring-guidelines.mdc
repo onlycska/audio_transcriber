@@ -1,0 +1,185 @@
+---
+description: Guidelines for writing docstrings and code documentation in all projects
+globs: "**/*.py"
+---
+
+# Docstring Guidelines
+
+The project uses **Google-style** docstrings with Sphinx cross-references.
+
+## Module-Level Docstrings
+
+Every `.py` file starts with a module docstring: a short summary line, then an expanded description of what the module provides.
+
+```python
+"""Mapping layer that transforms raw Kafka messages into index-ready documents.
+
+Provides a lazy generator that accepts an iterable of
+:class:`~fdg.service.models.messages.FDGLogMessage` instances (typically the
+output of :func:`~fdg.service.helpers.filters.filter_active_messages.filter_active_messages`)
+and yields :class:`~fdg.service.models.fresh_document.FreshVideoDocument`
+objects whose text fields have been sanitised and whose values are ready for
+OpenSearch ingestion.
+"""
+```
+
+## Function / Method Docstrings
+
+### Structure
+
+1. **Summary line** — one sentence, imperative mood ("Check whether …", "Lazily filter …", "Convert a single …").
+2. **Extended description** (optional) — explains the logic, edge cases, how the function fits in the pipeline, design decisions. Use Sphinx roles (`:func:`, `:class:`) to cross-reference other symbols.
+3. **`Args:`** — one entry per parameter. Keyword-only and optional params note their defaults with double backticks (e.g. ``Defaults to ``48``.``).
+4. **`Returns:` / `Yields:`** — what the function returns or yields.
+5. **`Examples:`** — doctest-style (`>>>`) usage examples. Show multiple scenarios: basic call, custom parameters, pipeline composition with other project functions.
+
+### Full example
+
+```python
+def filter_fresh_messages(
+    msg_batch: Iterable[messages.FDGLogMessage],
+    *,
+    timezone: ZoneInfo,
+    fresh_hours: int = 48,
+) -> Generator[messages.FDGLogMessage]:
+    """Lazily filter messages, yielding only videos within the freshness window.
+
+    Designed to be composed with other generators in the processing
+    pipeline — typically placed after
+    :func:`~fdg.service.helpers.filters.filter_active_messages.filter_active_messages`
+    and before the mapping stage.
+
+    The current time is captured **once** when iteration starts, so
+    every message in the batch is evaluated against the same reference
+    point.
+
+    Args:
+        msg_batch: Iterable of FDG messages to filter.
+        timezone: Timezone used to determine *now*.
+        fresh_hours: How many hours a video is considered fresh.
+            Defaults to ``48``.
+
+    Yields:
+        Messages whose effective upload time falls within the freshness
+        window.
+
+    Examples:
+        Keep only videos published in the last 48 hours:
+
+        >>> fresh = filter_fresh_messages(msg_batch, timezone=tz)
+
+        Use a custom freshness window of 24 hours:
+
+        >>> fresh = filter_fresh_messages(msg_batch, timezone=tz, fresh_hours=24)
+
+        Combine with other pipeline stages:
+
+        >>> active = filter_active_messages(batch, allowed_origin_types={"rtb", "rst"})
+        >>> fresh = filter_fresh_messages(active, timezone=tz)
+        >>> documents = map_to_fresh_documents(fresh)
+    """
+```
+
+### Short example (simple predicate)
+
+```python
+def is_active_message(message: messages.FDGLogMessage) -> bool:
+    """Check whether a message represents an active (visible, non-deleted) video.
+
+    A message is considered active when it is neither soft-deleted
+    nor hidden from public access.
+
+    Args:
+        message: message with video metadata.
+
+    Returns:
+        ``True`` if the video is active, ``False`` otherwise.
+
+    Examples:
+        >>> is_active_message(msg)
+        True
+    """
+```
+
+## API Endpoint Handlers
+
+For presentation-layer API handlers (for example, FastAPI route functions in
+`routers/*`), prefer route decorator metadata for endpoint docs (`summary`,
+`description`, `responses`).
+
+Endpoint docstrings are allowed when they are intended for Swagger/OpenAPI and
+written in **Markdown**.
+
+Rules for endpoint docstrings:
+
+1. Use Markdown so FastAPI/OpenAPI can render the content correctly.
+2. Keep docs concise and user-facing (request purpose, behavior, edge cases).
+3. Do not duplicate information already present in decorator metadata.
+4. Do not use Google-style internal sections (`Args`, `Returns`) in endpoint
+   docstrings intended for Swagger.
+
+```python
+# Bad: non-markdown, docstring and duplicative endpoint docstring
+@router.get("/search", summary="Search popular videos")
+async def search_popular_video(req: FulltextLikeRequest) -> SearchResponse:
+    """Search popular videos.
+    Args:
+        req: Request payload with the user query.
+
+    Returns:
+        Transport response with trie search results.
+    """
+    ...
+
+# Good: markdown endpoint docstring for Swagger/OpenAPI
+@router.get("/search", summary="Search popular videos")
+async def search_popular_video(...) -> SearchResponse:
+    """Returns ranked prefix candidates from the popular index.
+
+    ### Notes
+    - Empty or whitespace-only query returns an empty result.
+    - Query is trimmed before search, so surrounding spaces do not affect results.
+    """
+    ...
+```
+
+## Class / Dataclass / Pydantic Model Docstrings
+
+Use an **`Attributes:`** section to document fields. Mention types, defaults, edge cases.
+
+```python
+@dataclasses.dataclass(frozen=True, slots=True)
+class FreshVideoDocument:
+    """Cleaned and normalised representation of a video for the Fresh index.
+
+    All text fields are already sanitised (lowercased, stripped of special
+    characters) so the document can be sent directly to OpenSearch without
+    additional transformation.
+
+    Attributes:
+        uuid: Unique identifier of the video.
+        type: Mapped origin type (e.g. ``"rutube_video_origin_v1"``).
+            ``None`` when the origin type has no known mapping.
+        duration: Video duration in **milliseconds**.
+        content: List of sanitised text fragments used for full-text search:
+            ``[title, author_name, show_name]``.
+    """
+```
+
+## Formatting Rules
+
+| Element | Convention |
+|---------|-----------|
+| Inline code values | Double backticks: `` ``True`` ``, `` ``None`` ``, `` ``"rtb"`` `` |
+| Cross-references | Sphinx roles: `:func:\`~pkg.mod.func\``, `:class:\`~pkg.mod.Cls\`` |
+| Emphasis / variable names in prose | Single asterisks: `*now*`, `*max_age*` |
+| Bold for key terms | Double asterisks: `**once**`, `**milliseconds**` |
+| Parameter defaults | Note in the `Args:` entry: ``Defaults to ``48``.`` |
+
+## Private / Internal Helpers
+
+Private functions (prefixed with `_`) still require `Args:` and `Returns:` sections but may omit `Examples:`.
+
+## Language
+
+Write docstrings in **English**.

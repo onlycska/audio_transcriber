@@ -1,0 +1,142 @@
+---
+description: Enforces Clean Architecture boundaries and layer responsibilities.
+globs:
+  - "src/**/*.py"
+  - "tests/**/*.py"
+---
+# Clean Architecture Rule
+
+These rules define mandatory architectural boundaries for this project.
+The goal is to keep business logic isolated, maintainable, and testable.
+
+## Core principles
+
+1. Follow Clean Architecture with explicit layer boundaries.
+2. Dependencies must point inward (from outer layers to inner layers).
+3. Business logic must not depend on frameworks, transport, or storage details.
+4. Use dependency injection for all external dependencies.
+
+## 1) Presentation layer (API / Event Consumer / Scheduler / Producer)
+
+The presentation layer contains entry points and transport-level orchestration.
+
+Mandatory packages and entry-point split:
+
+- `api` package: REST API endpoints using `fastapi`.
+- `consumer` package: event consumers using `faststream` (Kafka/RabbitMQ).
+- `producer` package: event publishers/producers.
+- `scheduler` package: scheduled jobs using cron/taskiq-based scheduling.
+
+Rules:
+
+1. This layer wires concrete implementations to service-layer interfaces.
+2. This layer validates/serializes transport payloads and delegates to use cases.
+3. Business logic is forbidden in this layer.
+4. Handlers/controllers must remain thin and only orchestrate calls.
+5. `pydantic` is allowed only in this layer for request/response validation.
+
+## 2) Service layer (Use Cases)
+
+The service layer defines application behavior through explicit use cases.
+
+Important:
+
+- This layer must contain use cases, interfaces, and models.
+- This layer must remain framework-agnostic and transport-agnostic.
+
+Allowed building blocks:
+
+- Use case classes (or service classes with one clear business responsibility).
+- Input/output models (DTOs) for application boundaries.
+- Interfaces for repositories and external services.
+
+Rules:
+
+1. One use case class = one business scenario and one reason to change.
+2. A public method (for example `execute`) should represent the scenario flow.
+3. Use cases orchestrate domain objects and interfaces, but do not contain
+   infrastructure details.
+4. Write operations must be atomic and idempotent whenever retries are possible.
+5. Read-only use cases must not mutate state.
+6. Use explicit input/output models instead of raw transport payloads.
+7. Side effects (external calls, persistence, messaging) must go through
+   injected interfaces.
+8. Use cases should raise domain/application errors, not framework-specific
+   exceptions.
+9. Do not use `pydantic` in service models/use cases because of runtime overhead.
+
+Anemic model note:
+
+- An anemic domain model in the service layer is allowed when there is no
+  clearly expressed domain model in the domain layer, or when a dedicated
+  domain layer is absent for simple services.
+
+## 3) Domain layer
+
+Use a rich Domain Model for complex business logic when applicable:
+
+- Aggregates
+- Entities
+- Value Objects
+
+Rules:
+
+1. Domain entities must not depend on infrastructure/framework code.
+2. For simple CRUD services, a dedicated rich domain model may be omitted.
+3. Do not use `pydantic` in domain models because of runtime overhead.
+
+## 4) Infrastructure layer
+
+The infrastructure layer provides concrete implementations of service-layer
+interfaces.
+
+Typical components:
+
+- SQL/NoSQL repositories
+- External API clients
+- Message brokers and adapters
+
+Rules:
+
+1. Infrastructure depends on service/domain abstractions, never vice versa.
+2. Infrastructure code must not contain core business rules.
+3. Do not use `pydantic` in infrastructure models/adapters because of runtime
+   overhead.
+
+## 5) Dependency Injection
+
+All cross-layer dependencies must be provided through DI.
+
+Rules:
+
+1. High-level modules depend on abstractions, not concrete classes.
+2. Composition root is defined in outer layers (typically presentation).
+3. Do not instantiate infrastructure dependencies directly inside use cases.
+
+## 6) Shared layer (optional)
+
+A `shared` layer is allowed when it helps avoid violating Clean Architecture.
+
+Typical shared content:
+
+- Common constants
+- Base/common exceptions
+- Reusable helpers/utilities with no business-side effects
+
+Rules:
+
+1. Put code in `shared` only if it is truly cross-layer and neutral.
+2. `shared` must not become a "god module" with mixed responsibilities.
+3. `shared` must not bypass normal dependency direction or layer boundaries.
+
+## Reviewer checklist
+
+- Presentation handlers are thin and framework-only.
+- Use cases live in service layer and are framework-agnostic.
+- Use cases have one clear scenario responsibility.
+- Write use cases are atomic/idempotent where needed; read use cases are
+  side-effect free.
+- `pydantic` is used only in presentation layer validation.
+- Domain logic is isolated from infrastructure details.
+- DI is used instead of direct concrete construction.
+- `shared` usage is justified and does not break architecture boundaries.

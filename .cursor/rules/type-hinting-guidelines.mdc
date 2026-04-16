@@ -1,0 +1,130 @@
+---
+description: "Type hinting standard for Python code"
+globs: ["**/*.py"]
+---
+
+# Type Hinting Guidelines
+
+## Purpose
+
+This rule defines mandatory type-hinting conventions for Python code in this
+repository. Use these conventions for all new and updated code.
+
+## 1. Mandatory usage
+
+Type hints must be used everywhere practical:
+
+1. Function arguments and return values.
+2. Class attributes (including attributes assigned in `__init__`).
+3. Variables in public APIs and in complex business logic.
+
+Example:
+
+```python
+def calculate_sum(a: int, b: int) -> int:
+    return a + b
+
+
+class User:
+    def __init__(self, name: str, age: int) -> None:
+        self.name: str = name
+        self.age: int = age
+
+
+count: int = 0
+```
+
+## 2. Prefer built-in generic types
+
+When possible, use built-in generic types instead of importing aliases from
+`typing`.
+
+Preferred:
+
+```python
+def process_items(items: list[str]) -> dict[str, int]:
+    ...
+```
+
+Avoid when built-ins are sufficient:
+
+```python
+from typing import List, Dict
+
+def process_items(items: List[str]) -> Dict[str, int]:
+    ...
+```
+
+## 3. Use special `typing` types when needed
+
+If built-in container types are not expressive enough, use dedicated types from
+`typing`.
+
+- `Iterable`, `Iterator`, `Generator`: for iteration contracts.
+- `Callable`: for callbacks and function dependencies.
+- `TypeVar`: for generic functions and reusable type relationships.
+- `T | None` (or `Optional[T]` in legacy modules): when value can be absent.
+
+Examples:
+
+```python
+from collections.abc import Iterable, Callable
+from itertools import islice
+from typing import TypeVar
+
+
+def batch(data: Iterable[int], size: int) -> list[list[int]]:
+    iterator = iter(data)
+    result: list[list[int]] = []
+    while chunk := list(islice(iterator, size)):
+        result.append(chunk)
+    return result
+
+
+def on_success(callback: Callable[[str, int], None]) -> None:
+    callback("Done", 200)
+
+
+def get_user(user_id: int) -> dict[str, str] | None:
+    return db.get(user_id) or None
+
+
+T = TypeVar("T")
+
+
+def first_item(items: list[T]) -> T:
+    return items[0]
+```
+
+## 4. Use forward references for not-yet-defined types
+
+If a type is not yet available at annotation evaluation time, use a string
+annotation.
+
+```python
+class TreeNode:
+    def __init__(
+        self,
+        left: "TreeNode | None" = None,
+        right: "TreeNode | None" = None,
+    ) -> None:
+        self.left = left
+        self.right = right
+```
+
+## 5. Fixed-size containers must be explicit
+
+For tuples with a known number of elements, annotate every position explicitly.
+
+```python
+def get_coordinates() -> tuple[float, float, float]:
+    return (1.0, 2.5, -3.3)
+```
+
+## Author and reviewer checklist
+
+- All public functions/methods include argument and return annotations.
+- Class attributes are typed when declared or initialized.
+- Built-in generics (`list`, `dict`, `tuple`, etc.) are preferred.
+- `typing` abstractions are used only when they add semantic value.
+- Nullable values use `T | None` consistently (or module-approved legacy style).

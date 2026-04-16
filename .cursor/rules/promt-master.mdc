@@ -1,0 +1,152 @@
+---
+description: Prompt engineering workflow for Cursor with strict requirement clarification and code quality gates.
+alwaysApply: true
+---
+
+# Promt Master Guidelines
+
+Use this rule to turn vague requests into precise, low-waste execution prompts, improve requirement discovery quality, and keep implementation quality consistent with repository standards.
+
+## 1) Core objective
+
+1. Convert ambiguous tasks into explicit, scoped, verifiable instructions.
+2. Prefer first-pass correctness over iterative guesswork.
+3. Keep prompts and code changes minimal but complete.
+4. Never trade safety, architecture, or testability for speed.
+
+## 2) Prompt intake checklist (required)
+
+Before writing or executing a prompt, extract:
+
+1. Task: exact action verb and expected artifact.
+2. Target: tool/model/runtime where prompt is used.
+3. Scope: exact files/functions/components allowed to change.
+4. Constraints: hard limits, forbidden actions, language/framework versions.
+5. Output contract: expected format, length, and "done when" criteria.
+6. Context: previous decisions and known failed attempts.
+
+If critical data is missing, ask up to 3 focused clarifying questions.
+
+## 3) Human interaction and clarification protocol (required)
+
+### 3.1 Clarifying question strategy
+
+Ask questions only for blockers that materially change implementation.  
+Prefer at most 3 questions in one batch, ordered by impact:
+
+1. Scope boundary uncertainty (what files/features are in or out).
+2. Output/acceptance ambiguity (what "done" means).
+3. Constraint ambiguity (stack/version/security/performance limits).
+
+Questions must be concrete and answerable in one line. Avoid theory questions.
+
+### 3.2 Requirement diagnosis patterns
+
+Before asking, classify failure type:
+
+1. Vague task verb ("improve", "fix", "optimize") -> request measurable target.
+2. Multiple tasks mixed into one request -> split into sequential steps.
+3. Missing success criteria -> define binary "done when".
+4. Missing audience/user context -> ask for target audience only if output is user-facing.
+5. Missing known failures -> ask what was already tried to avoid repetition.
+
+### 3.3 Communication style contract
+
+1. Be concise, direct, and action-oriented.
+2. Prefer options with trade-offs when architecture choices exist.
+3. Explicitly state assumptions when proceeding without user response.
+4. Never pretend certainty when context is missing.
+
+## 4) Cursor/code-agent prompt format (default)
+
+For code-editing prompts, always include:
+
+1. `File/Path`: concrete path anchors.
+2. `Current behavior`: what exists now.
+3. `Desired change`: what must be different.
+4. `Do-not-touch`: files/areas that must remain unchanged.
+5. `Constraints`: dependencies, API contracts, style constraints.
+6. `Done when`: binary completion criteria.
+
+Never issue global "fix everything" instructions without explicit file boundaries.
+
+## 5) Safety and anti-hallucination rules
+
+1. Do not invent files, APIs, schema, configs, or dependencies.
+2. If a fact is uncertain, mark uncertainty explicitly instead of guessing.
+3. Keep instructions deterministic; avoid subjective terms like "better" without measurable criteria.
+4. For factual tasks, require grounded evidence or explicit uncertainty marking.
+
+## 6) Context memory and consistency rules
+
+When a task references prior work, include a compact memory block at the top:
+
+`Context (carry forward):`
+- locked stack/tool decisions
+- architecture constraints already agreed
+- what has been tried and failed
+- naming/style conventions that must remain
+
+Never contradict previously locked decisions unless user explicitly overrides them.
+
+## 7) Architecture and design constraints
+
+1. Follow Clean Architecture boundaries: outer layers depend inward only.
+2. Keep business logic out of transport/infrastructure adapters.
+3. Use dependency inversion and injection for external integrations.
+4. Respect SOLID principles; avoid god classes and mixed responsibilities.
+5. Prefer extension via abstractions over modifying stable behavior.
+
+## 8) Python implementation quality gates
+
+For Python changes:
+
+1. Type hints are mandatory for public functions, methods, and important attributes.
+2. Prefer built-in generics (`list`, `dict`, `tuple`) over legacy typing aliases where possible.
+3. Docstrings use Google style, with clear `Args`, `Returns/Yields`, and examples where useful.
+4. Logging is structured and contextual; avoid sensitive data in logs.
+5. Error handling must be explicit; do not silently swallow exceptions.
+
+## 9) Testing and verification policy
+
+1. Every meaningful behavior change must be covered by tests.
+2. Tests should be isolated, deterministic, and readable.
+3. Follow Arrange/Act/Assert structure.
+4. Include positive and negative scenarios when behavior has failure modes.
+5. Verify completion with concrete checks (tests, lints, or explicit acceptance criteria).
+
+## 10) Prompt optimization rules
+
+1. Remove non-load-bearing words and repeated constraints.
+2. Put critical constraints in the first section of the prompt.
+3. Use one task per prompt when outcomes can conflict.
+4. Split complex work into sequential prompts with checkpoints.
+5. Prefer explicit "MUST/NEVER" language for hard requirements.
+
+## 11) Agent stop conditions (mandatory for autonomous tasks)
+
+Pause and request confirmation before:
+
+1. Deleting files or making irreversible changes.
+2. Adding new dependencies or external services.
+3. Changing database schema or core architecture decisions.
+4. Expanding scope outside declared file boundaries.
+
+## 12) Prompt delivery contract
+
+For generated execution prompts:
+
+1. Output exactly one primary prompt block unless user asks for alternatives.
+2. Include a short target/tool line and one-line optimization rationale.
+3. Include setup notes only when required for execution.
+4. Do not include internal framework names unless user requests them.
+
+## 13) Definition of done
+
+A prompt/change is complete only if:
+
+1. Scope boundaries were respected.
+2. Output matches the required format/contract.
+3. Architecture and quality rules were not violated.
+4. Validation artifacts exist (tests/lints/checklist results).
+5. No unresolved ambiguity remains for the next step.

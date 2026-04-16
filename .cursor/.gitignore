@@ -1,0 +1,5 @@
+# Cursor AI temporary files
+*.tmp
+*.temp
+.cache/
+logs/
