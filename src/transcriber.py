@@ -1,18 +1,19 @@
 """Audio transcription with diarization and overlap-safe chunking."""
 
+import os
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-import os
-import math
-from collections.abc import Sequence
-from typing import Any
-
-from loguru import logger
 import soundfile as sf
 import torch
 import whisper
+from loguru import logger
 from pyannote.audio import Pipeline
+
+from src.infrastructure.audio_conversion import ensure_wav_for_pipeline
+from src.infrastructure.logging import configure_logging
+from src.service.transcription import mixdown_to_mono, transcribe_in_chunks
 
 HF_TOKEN = os.getenv("HF_TOKEN", "your_token")
 AUDIO_FILE = os.getenv("AUDIO_FILE", "/path/to/audiofile.wav")
@@ -25,96 +26,8 @@ DEFAULT_INITIAL_PROMPT = f"Разговор {NUM_SPEAKERS} {people_word} на р
 INITIAL_PROMPT = os.getenv("INITIAL_PROMPT", DEFAULT_INITIAL_PROMPT).strip() or None
 LANGUAGE = os.getenv("LANGUAGE", "ru")
 
-
-def _mixdown_to_mono(waveform: Any) -> Any:
-    """Convert multi-channel audio to mono for Whisper."""
-    if waveform.ndim == 1:
-        return waveform
-    return waveform.mean(axis=1)
-
-
-def _transcribe_in_chunks(
-    model: whisper.Whisper,
-    audio_mono: Any,
-    sample_rate: int,
-    *,
-    chunk_seconds: int,
-    overlap_seconds: float,
-    language: str,
-    initial_prompt: str | None,
-) -> list[dict[str, Any]]:
-    """Transcribe long audio in overlapping chunks without dropping boundaries."""
-    if chunk_seconds <= 0:
-        raise ValueError("CHUNK_SECONDS must be greater than 0.")
-    if overlap_seconds < 0:
-        raise ValueError("OVERLAP_SECONDS must be greater than or equal to 0.")
-
-    total_samples = len(audio_mono)
-    total_duration = total_samples / sample_rate
-    collected_segments: list[dict[str, Any]] = []
-    chunk_step = float(chunk_seconds)
-    current = 0.0
-    total_chunks = max(1, math.ceil(total_duration / chunk_step))
-    chunk_index = 0
-
-    logger.info(
-        f"Chunk transcription started: duration={total_duration:.2f}s, "
-        f"chunk_seconds={chunk_seconds}, overlap_seconds={overlap_seconds}, "
-        f"total_chunks={total_chunks}"
-    )
-
-    while current < total_duration:
-        chunk_index += 1
-        remaining_chunks = max(0, total_chunks - chunk_index)
-        chunk_start = max(0.0, current - overlap_seconds)
-        chunk_end = min(total_duration, current + chunk_seconds + overlap_seconds)
-        logger.info(
-            f"Chunk progress: processed={chunk_index}/{total_chunks}, "
-            f"remaining={remaining_chunks}, window={chunk_start:.2f}-{chunk_end:.2f}s"
-        )
-
-        start_idx = int(chunk_start * sample_rate)
-        end_idx = int(chunk_end * sample_rate)
-        chunk_audio = audio_mono[start_idx:end_idx]
-
-        result = model.transcribe(
-            chunk_audio,
-            language=language,
-            fp16=False,
-            initial_prompt=initial_prompt,
-            condition_on_previous_text=False,
-            temperature=0.0,
-        )
-
-        primary_start = current
-        primary_end = min(total_duration, current + chunk_step)
-        accepted_segments = 0
-
-        for seg in result["segments"]:
-            seg_start = float(seg["start"]) + chunk_start
-            seg_end = float(seg["end"]) + chunk_start
-            seg_mid = (seg_start + seg_end) / 2
-
-            # Берём только середину сегмента из "ядра" чанка, чтобы убрать дубли на overlap.
-            if primary_start <= seg_mid < primary_end:
-                accepted_segments += 1
-                collected_segments.append(
-                    {
-                        "start": seg_start,
-                        "end": seg_end,
-                        "text": seg["text"],
-                    }
-                )
-        logger.info(
-            f"Chunk completed: processed={chunk_index}/{total_chunks}, "
-            f"accepted_segments={accepted_segments}"
-        )
-
-        current += chunk_step
-
-    logger.info(f"Chunk transcription completed: collected_segments={len(collected_segments)}")
-    return collected_segments
-
+configure_logging()
+logger.info("Application startup")
 
 # 1. Загружаем pipeline
 logger.info("Загружаем diarization модель...")
@@ -131,7 +44,8 @@ else:
 
 # 2. Предзагружаем аудио через soundfile → обходим torchcodec
 logger.info("Определяем спикеров...")
-waveform, sample_rate = sf.read(AUDIO_FILE, dtype="float32", always_2d=True)
+audio_path = ensure_wav_for_pipeline(Path(AUDIO_FILE))
+waveform, sample_rate = sf.read(audio_path, dtype="float32", always_2d=True)
 # soundfile возвращает (samples, channels), pyannote ждёт (channels, samples)
 waveform_tensor = torch.tensor(waveform.T)
 audio_input = {"waveform": waveform_tensor, "sample_rate": sample_rate}
@@ -144,8 +58,8 @@ logger.info(
     f"initial_prompt_set={INITIAL_PROMPT is not None}"
 )
 model = whisper.load_model(WHISPER_MODEL)
-audio_mono = _mixdown_to_mono(waveform)
-segments = _transcribe_in_chunks(
+audio_mono = mixdown_to_mono(waveform)
+segments = transcribe_in_chunks(
     model,
     audio_mono,
     sample_rate,
@@ -221,10 +135,10 @@ lines = [f"[{item['speaker']}] {item['text']}" for item in merged]
 logger.info(f"Транскрипция готова: segments={len(segments)}, merged_replicas={len(merged)}")
 logger.info(f"\n=== ТРАНСКРИПЦИЯ ===\n{'\n'.join(lines)}")
 
-results_dir = Path("results")
+results_dir = Path("../results")
 results_dir.mkdir(exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-output_path = results_dir / f"transcript_{Path(AUDIO_FILE).stem}_{timestamp}.txt"
+output_path = results_dir / f"transcript_{audio_path.stem}_{timestamp}.txt"
 output_path.write_text("\n".join(lines), encoding="utf-8")
 logger.success(f"Сохранено в {output_path}")
