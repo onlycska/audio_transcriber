@@ -7,14 +7,25 @@ import logging
 import os
 import sys
 import traceback
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger as _loguru_logger
 
+if TYPE_CHECKING:
+    from loguru import PatcherFunction, Record
+
 
 def _format_exception_traceback(exc: Any) -> str:
-    """Format exception data from loguru record into traceback text."""
+    """Format exception data from loguru record into traceback text.
+
+    Args:
+        exc: Loguru exception object from a record.
+
+    Returns:
+        Formatted traceback text.
+    """
     tb = getattr(exc, "traceback", None)
     if tb is None:
         return str(exc)
@@ -22,7 +33,14 @@ def _format_exception_traceback(exc: Any) -> str:
 
 
 def _extract_source_from_traceback(exc: Any) -> str | None:
-    """Extract source (file:function:line) from traceback when possible."""
+    """Extract source (file:function:line) from traceback when possible.
+
+    Args:
+        exc: Loguru exception object from a record.
+
+    Returns:
+        Source location or ``None`` when traceback data is unavailable.
+    """
     tb = getattr(exc, "traceback", None)
     if tb is None:
         return None
@@ -33,15 +51,29 @@ def _extract_source_from_traceback(exc: Any) -> str | None:
     return f"{frame.filename}:{frame.name}:{frame.lineno}"
 
 
-def _get_level_name(record: dict[str, Any]) -> str:
-    """Get normalized level name from loguru record."""
+def _get_level_name(record: Mapping[str, Any]) -> str:
+    """Get normalized level name from loguru record.
+
+    Args:
+        record: Loguru record dictionary.
+
+    Returns:
+        Upper-level name from the record, or ``"INFO"`` as a fallback.
+    """
     level_obj = record.get("level")
     name = getattr(level_obj, "name", None)
     return str(name or "INFO")
 
 
-def _json_format(record: dict[str, Any]) -> str:
-    """Format log record as minimal JSON for structured logging."""
+def _json_format(record: Mapping[str, Any]) -> str:
+    """Format log record as minimal JSON for structured logging.
+
+    Args:
+        record: Loguru record dictionary.
+
+    Returns:
+        JSON string with stable operational fields.
+    """
     exc = record.get("exception")
     source = _extract_source_from_traceback(exc) if exc is not None else None
     if source is None:
@@ -73,8 +105,15 @@ def _json_format(record: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str, separators=(", ", ": "))
 
 
-def _text_format(record: dict[str, Any]) -> str:
-    """Format log record as human-readable text with optional extra."""
+def _text_format(record: Mapping[str, Any]) -> str:
+    """Format log record as human-readable text with optional extra.
+
+    Args:
+        record: Loguru record dictionary.
+
+    Returns:
+        Human-readable log line.
+    """
     time_val = record.get("time")
     if isinstance(time_val, datetime):
         time_str = time_val.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -125,16 +164,32 @@ def _is_json_enabled() -> bool:
 
 
 def _get_effective_level(level: str | None) -> str:
-    """Resolve effective log level from argument or environment."""
+    """Resolve effective log level from argument or environment.
+
+    Args:
+        level: Explicit log level override.
+
+    Returns:
+        Uppercase log level name.
+    """
     value = level or os.getenv("LOG_LEVEL", "INFO")
     return str(value).upper()
 
 
-def _make_format_patcher(use_json: bool):
-    """Create a patcher that stores formatted output into record field."""
+def _make_format_patcher(use_json: bool) -> PatcherFunction:
+    """Create a patcher that stores formatted output into record field.
 
-    def _patch(record: Any) -> None:
-        record["_formatted"] = _json_format(record) if use_json else _text_format(record)
+    Args:
+        use_json: Whether to format records as JSON.
+
+    Returns:
+        Loguru patcher callable.
+    """
+
+    def _patch(record: Record) -> None:
+        """Attach preformatted log text to a loguru record."""
+        mutable_record = cast(Any, record)
+        mutable_record["_formatted"] = _json_format(record) if use_json else _text_format(record)
 
     return _patch
 
@@ -162,7 +217,12 @@ def _configure_third_party_log_levels() -> None:
 
 
 def configure_logging(*, level: str | None = None, json_format: bool | None = None) -> None:
-    """Configure service logging once during application startup."""
+    """Configure service logging once during application startup.
+
+    Args:
+        level: Optional explicit log level.
+        json_format: Optional explicit JSON/text format switch.
+    """
     effective_level = _get_effective_level(level)
     use_json = json_format if json_format is not None else _is_json_enabled()
 
@@ -187,4 +247,3 @@ def configure_logging(*, level: str | None = None, json_format: bool | None = No
         )
 
     _configure_third_party_log_levels()
-

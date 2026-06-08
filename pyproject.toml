@@ -6,7 +6,7 @@ dependencies = [
     "numpy>=2.0",
     "torch>=2.2,<3.0",
     "pyannote-audio>=4.0.1",
-    "openai-whisper",
+    "mlx-whisper>=0.4.3",
     "soundfile",
     "loguru>=0.7.3",
     "pytest>=9.0.3",
@@ -23,3 +23,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

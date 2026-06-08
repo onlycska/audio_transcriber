@@ -6,7 +6,6 @@
   "exclude": [
     ".venv",
     "**/__pycache__",
-    "src/transcriber.py",
     "transcriber.py"
   ],
   "pythonVersion": "3.13",
